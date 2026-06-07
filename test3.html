@@ -1,0 +1,247 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Smart Color Concentration Analyzer</title>
+
+<style>
+body{
+font-family: Arial, sans-serif;
+text-align: center;
+background: #f4f6f8;
+padding: 15px;
+}
+h2{ color:#222; }
+button, input{
+padding:10px 14px;
+margin:6px;
+font-size:16px;
+}
+video, canvas{
+width:340px;
+max-width:95%;
+border:2px solid #999;
+border-radius:12px;
+background:white;
+}
+.result{
+background:white;
+margin-top:12px;
+padding:12px;
+border-radius:12px;
+}
+.small{
+font-size:14px;
+color:#555;
+}
+</style>
+</head>
+
+<body>
+
+<h2>ระบบวิเคราะห์ความเข้มข้นจากสี</h2>
+
+<button onclick="startCamera()">เปิดกล้อง</button>
+<button onclick="captureImage()">ถ่ายภาพ</button>
+
+<br>
+
+<video id="video" autoplay playsinline></video>
+
+<p>หรือเลือกรูปจากคลังภาพ</p>
+<input type="file" accept="image/*" onchange="loadImage(event)">
+
+<p class="small">หลังถ่ายหรือเลือกรูปแล้ว ให้แตะบริเวณสีที่ต้องการวัด</p>
+
+<canvas id="canvas" width="340" height="255"></canvas>
+
+<div class="result">
+<h3>ผลการวิเคราะห์</h3>
+<p id="position">ตำแหน่งที่เลือก : -</p>
+<p id="rgb">RGB : -</p>
+<p id="light">ค่าแสง : -</p>
+<p id="conc">ความเข้มข้น : -</p>
+</div>
+
+<script>
+const video = document.getElementById("video");
+const canvas = document.getElementById("canvas");
+const ctx = canvas.getContext("2d");
+
+let currentImage = null;
+let selectedX = null;
+let selectedY = null;
+
+// ฐานข้อมูลตัวอย่าง ต้องเปลี่ยนเป็นค่าจริงจากการทดลอง
+const database = [
+{ light: 220, concentration: 0 },
+{ light: 210, concentration: 1 },
+{ light: 200, concentration: 2 },
+{ light: 190, concentration: 3 },
+{ light: 180, concentration: 4 },
+{ light: 170, concentration: 5 },
+{ light: 160, concentration: 6 },
+{ light: 150, concentration: 7 },
+{ light: 140, concentration: 8 },
+{ light: 130, concentration: 9 },
+{ light: 120, concentration: 10 }
+];
+
+async function startCamera(){
+try{
+const stream = await navigator.mediaDevices.getUserMedia({
+video: { facingMode: "environment" }
+});
+video.srcObject = stream;
+}catch(error){
+alert("เปิดกล้องไม่ได้ กรุณาอนุญาตการใช้กล้อง");
+}
+}
+
+function captureImage(){
+ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+
+currentImage = new Image();
+currentImage.src = canvas.toDataURL();
+
+document.getElementById("position").innerHTML =
+"ถ่ายภาพแล้ว กรุณาแตะจุดที่ต้องการวัด";
+}
+
+function loadImage(event){
+const file = event.target.files[0];
+if(!file) return;
+
+const img = new Image();
+
+img.onload = function(){
+ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+currentImage = img;
+
+document.getElementById("position").innerHTML =
+"เลือกรูปแล้ว กรุณาแตะจุดที่ต้องการวัด";
+};
+
+img.src = URL.createObjectURL(file);
+}
+
+// แตะหรือคลิกบนรูปเพื่อเลือกตำแหน่งวัดสี
+canvas.addEventListener("click", function(event){
+const rect = canvas.getBoundingClientRect();
+
+selectedX = Math.round((event.clientX - rect.left) * (canvas.width / rect.width));
+selectedY = Math.round((event.clientY - rect.top) * (canvas.height / rect.height));
+
+analyzeSelectedArea(selectedX, selectedY);
+});
+
+canvas.addEventListener("touchstart", function(event){
+event.preventDefault();
+
+const rect = canvas.getBoundingClientRect();
+const touch = event.touches[0];
+
+selectedX = Math.round((touch.clientX - rect.left) * (canvas.width / rect.width));
+selectedY = Math.round((touch.clientY - rect.top) * (canvas.height / rect.height));
+
+analyzeSelectedArea(selectedX, selectedY);
+});
+
+function analyzeSelectedArea(x, y){
+if(currentImage){
+ctx.drawImage(currentImage, 0, 0, canvas.width, canvas.height);
+}
+
+const sampleSize = 30;
+const half = sampleSize / 2;
+
+let startX = Math.max(0, x - half);
+let startY = Math.max(0, y - half);
+
+if(startX + sampleSize > canvas.width){
+startX = canvas.width - sampleSize;
+}
+
+if(startY + sampleSize > canvas.height){
+startY = canvas.height - sampleSize;
+}
+
+const imageData = ctx.getImageData(startX, startY, sampleSize, sampleSize);
+const data = imageData.data;
+
+let totalR = 0;
+let totalG = 0;
+let totalB = 0;
+let pixels = 0;
+
+for(let i = 0; i < data.length; i += 4){
+totalR += data[i];
+totalG += data[i + 1];
+totalB += data[i + 2];
+pixels++;
+}
+
+const avgR = totalR / pixels;
+const avgG = totalG / pixels;
+const avgB = totalB / pixels;
+
+const brightness =
+(0.299 * avgR) +
+(0.587 * avgG) +
+(0.114 * avgB);
+
+const concentration = findClosestConcentration(brightness);
+
+// วาดกรอบตรงบริเวณที่เลือก
+ctx.strokeStyle = "red";
+ctx.lineWidth = 3;
+ctx.strokeRect(startX, startY, sampleSize, sampleSize);
+
+ctx.beginPath();
+ctx.arc(x, y, 5, 0, 2 * Math.PI);
+ctx.fillStyle = "red";
+ctx.fill();
+
+document.getElementById("position").innerHTML =
+"ตำแหน่งที่เลือก : X = " + x + ", Y = " + y;
+
+document.getElementById("rgb").innerHTML =
+"RGB : " +
+Math.round(avgR) + ", " +
+Math.round(avgG) + ", " +
+Math.round(avgB);
+
+document.getElementById("light").innerHTML =
+"ค่าแสง : " + brightness.toFixed(2);
+
+if(concentration >= 10){
+document.getElementById("conc").innerHTML =
+"ความเข้มข้น : มากกว่าหรือเท่ากับ 10%";
+}else{
+document.getElementById("conc").innerHTML =
+"ความเข้มข้นประมาณ : " + concentration + "%";
+}
+}
+
+function findClosestConcentration(lightValue){
+let closest = database[0];
+
+for(let i = 1; i < database.length; i++){
+if(
+Math.abs(database[i].light - lightValue) <
+Math.abs(closest.light - lightValue)
+){
+closest = database[i];
+}
+}
+
+return closest.concentration;
+}
+</script>
+
+</body>
+</html>
